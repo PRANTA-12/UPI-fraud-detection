@@ -38,9 +38,10 @@ def test_predict_valid_transaction():
     assert data["prediction"] in [0, 1]
     assert data["result"] in ["Fraud", "Legitimate"]
     assert 0 <= data["fraud_probability"] <= 1
+    assert data["risk_level"] in ["High", "Medium", "Low"]
     assert data["threshold"] == 0.50
     assert data["model"] == "XGBoost"
-
+    
 
 def test_predict_invalid_transaction_id():
     response = client.post(

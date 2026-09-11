@@ -79,6 +79,7 @@ class PredictionResponse(BaseModel):
     prediction: int
     result: str
     fraud_probability: float
+    risk_level: str
     threshold: float
     model: str
 
@@ -223,6 +224,16 @@ def predict_transaction(request: TransactionRequest):
             if prediction == 1
             else "Legitimate"
         )
+        # -------------------------------------------------
+        # RISK LEVEL
+        # -------------------------------------------------
+
+        if probability >= 0.70:
+            risk_level = "High"
+        elif probability >= 0.30:
+            risk_level = "Medium"
+        else:
+            risk_level = "Low"
 
         # -------------------------------------------------
         # SAVE PREDICTION TO DATABASE
@@ -266,6 +277,7 @@ def predict_transaction(request: TransactionRequest):
             "prediction": prediction,
             "result": result,
             "fraud_probability": probability,
+            "risk_level": risk_level,
             "threshold": threshold,
             "model": "XGBoost"
         }
