@@ -1,0 +1,31 @@
+services:
+
+  db:
+    image: postgres:16
+    container_name: upi-fraud-db
+    environment:
+      POSTGRES_DB: upi_fraud_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build: .
+    image: upi-fraud-api:latest
+    container_name: upi-fraud-api
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_NAME: upi_fraud_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_PORT: 5432
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgres_data:
