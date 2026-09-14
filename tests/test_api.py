@@ -17,6 +17,7 @@ def test_health_check():
     assert data["status"] == "healthy"
     assert data["model"] == "XGBoost"
     assert data["database"] == "PostgreSQL"
+    assert data["database_connection"] == "ok"
 
 
 def test_legitimate_transaction():
