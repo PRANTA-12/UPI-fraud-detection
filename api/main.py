@@ -6,8 +6,15 @@ import psycopg2
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import logging
 
 load_dotenv()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+logger = logging.getLogger(__name__)
 
 # =========================================================
 # FASTAPI APP
@@ -32,8 +39,8 @@ FEATURE_PATH = BASE_DIR / "models" / "features.pkl"
 model = joblib.load(MODEL_PATH)
 features = joblib.load(FEATURE_PATH)
 
-print("Model loaded successfully!")
-print("Features:", features)
+logger.info("XGBoost model loaded successfully")
+logger.info("Model features loaded: %d", len(features))
 
 
 # =========================================================
@@ -101,11 +108,37 @@ def root():
 
 @app.get("/health")
 def health():
-    return {
-        "status": "healthy",
-        "model": "XGBoost",
-        "database": "PostgreSQL"
-    }
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+
+        return {
+            "status": "healthy",
+            "model": "XGBoost",
+            "database": "PostgreSQL",
+            "database_connection": "ok"
+        }
+
+    except Exception as e:
+        print("HEALTH CHECK ERROR:", e)
+
+        raise HTTPException(
+            status_code=503,
+            detail="Database connection unavailable"
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if conn:
+            conn.close()
 
 
 # =========================================================
@@ -268,6 +301,19 @@ def predict_transaction(request: TransactionRequest):
         conn.commit()
 
         # -------------------------------------------------
+        # LOG PREDICTION
+        # -------------------------------------------------
+
+        logger.info(
+            "Prediction completed - transaction_id=%s, prediction=%s, "
+            "probability=%.6f, risk_level=%s",
+            transaction_id,
+            prediction,
+            probability,
+            risk_level
+        )
+
+        # -------------------------------------------------
         # RETURN RESPONSE
         # -------------------------------------------------
 
@@ -294,7 +340,7 @@ def predict_transaction(request: TransactionRequest):
         if conn:
             conn.rollback()
 
-        print("ERROR:", e)
+        logger.exception("Prediction request failed")
 
         raise HTTPException(
             status_code=500,
