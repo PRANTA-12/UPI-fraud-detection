@@ -6,3 +6,7 @@ __pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
+
+venv/
+creditcard.csv
+.pytest_cache/

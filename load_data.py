@@ -6,7 +6,7 @@ from psycopg2.extras import execute_values
 # 1. CSV PATH
 # --------------------------------------------------
 
-CSV_PATH = r"C:\Users\IT_SHOP\project\creditcard.csv"
+CSV_PATH = "/app/creditcard.csv"
 
 
 # --------------------------------------------------
@@ -14,11 +14,11 @@ CSV_PATH = r"C:\Users\IT_SHOP\project\creditcard.csv"
 # --------------------------------------------------
 
 conn = psycopg2.connect(
-    host="localhost",
+    host="db",
     port=5432,
     database="upi_fraud_db",
     user="postgres",
-    password="Pranta@123"
+    password="postgres"
 )
 
 cursor = conn.cursor()

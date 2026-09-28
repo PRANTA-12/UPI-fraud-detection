@@ -1,31 +1,151 @@
 services:
 
+  # -------------------------
+  # PostgreSQL Database
+  # -------------------------
   db:
     image: postgres:16
     container_name: upi-fraud-db
+
     environment:
-      POSTGRES_DB: upi_fraud_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
     ports:
       - "5433:5432"
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+  # -------------------------
+  # Redis
+  # -------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: upi-fraud-redis
+
+    ports:
+      - "6379:6379"
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+
+  # -------------------------
+  # FastAPI
+  # -------------------------
   api:
     build: .
     image: upi-fraud-api:latest
     container_name: upi-fraud-api
+
+    volumes:
+      - ./creditcard.csv:/app/creditcard.csv:ro
+
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
     environment:
-      DB_HOST: db
-      DB_NAME: upi_fraud_db
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_PORT: 5432
+      DB_HOST: ${DB_HOST}
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_PORT: ${DB_PORT}
+
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+
+      STREAM_NAME: ${STREAM_NAME}
+      DLQ_STREAM_NAME: ${DLQ_STREAM_NAME}
+      CONSUMER_GROUP: ${CONSUMER_GROUP}
+      ALERT_CHANNEL: ${ALERT_CHANNEL}
+
     ports:
       - "8000:8000"
 
+
+  # -------------------------
+  # Real-Time Fraud Consumer
+  # -------------------------
+  consumer:
+    build: .
+    image: upi-fraud-api:latest
+
+    command: ["python", "-m", "streaming.consumer"]
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_PORT: ${DB_PORT}
+
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+
+      STREAM_NAME: ${STREAM_NAME}
+      DLQ_STREAM_NAME: ${DLQ_STREAM_NAME}
+      CONSUMER_GROUP: ${CONSUMER_GROUP}
+      CONSUMER_NAME: consumer-1
+      ALERT_CHANNEL: ${ALERT_CHANNEL}
+
+
+  # -------------------------
+  # Transaction Producer
+  # -------------------------
+  # Replays transactions from the database
+  # to simulate a real-time transaction source.
+  producer:
+    build: .
+    image: upi-fraud-api:latest
+    container_name: upi-fraud-producer
+
+    command: ["python", "-m", "streaming.producer"]
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_PORT: ${DB_PORT}
+
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+
+      STREAM_NAME: ${STREAM_NAME}
+
+      PRODUCER_MIN_DELAY_MS: ${PRODUCER_MIN_DELAY_MS}
+      PRODUCER_MAX_DELAY_MS: ${PRODUCER_MAX_DELAY_MS}
+
+
+# -------------------------
+# Persistent PostgreSQL Data
+# -------------------------
 volumes:
   postgres_data:

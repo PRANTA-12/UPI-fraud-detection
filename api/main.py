@@ -1,12 +1,18 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
-import pandas as pd
-import joblib
-import psycopg2
-from pathlib import Path
-from dotenv import load_dotenv
-import os
+import asyncio
+import json
 import logging
+import os
+from pathlib import Path
+
+import joblib
+import pandas as pd
+import psycopg2
+import redis
+import redis.asyncio as aioredis
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 load_dotenv()
 logging.basicConfig(
@@ -22,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="UPI Fraud Detection API",
-    description="Fraud detection API using XGBoost and PostgreSQL",
-    version="1.0"
+    description="Fraud detection API using XGBoost, PostgreSQL and a real-time Redis Streams pipeline",
+    version="2.0"
 )
 
 
@@ -42,6 +48,10 @@ features = joblib.load(FEATURE_PATH)
 logger.info("XGBoost model loaded successfully")
 logger.info("Model features loaded: %d", len(features))
 
+STATIC_DIR = BASE_DIR / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 # =========================================================
 # POSTGRESQL CONFIGURATION
@@ -56,16 +66,126 @@ DB_CONFIG = {
 }
 
 
-# =========================================================
-# DATABASE CONNECTION
-# =========================================================
-
 def get_connection():
     return psycopg2.connect(**DB_CONFIG)
 
 
 # =========================================================
-# REQUEST MODEL
+# REDIS / STREAMING CONFIGURATION
+# =========================================================
+
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+STREAM_NAME = os.getenv("STREAM_NAME", "transactions_stream")
+CONSUMER_GROUP = os.getenv("CONSUMER_GROUP", "fraud_scorers")
+ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "fraud_alerts")
+
+
+# =========================================================
+# LIVE WEBSOCKET BROADCASTING
+# =========================================================
+# The streaming consumer publishes every scored transaction to a Redis
+# pub/sub channel. This app subscribes once on startup and fans each
+# message out to every connected WebSocket client, so the live feed works
+# the same whether there is one browser tab open or a hundred.
+
+class ConnectionManager:
+    def __init__(self):
+        self.active: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active.append(websocket)
+        logger.info("WebSocket client connected (%d active)", len(self.active))
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active:
+            self.active.remove(websocket)
+            logger.info("WebSocket client disconnected (%d active)", len(self.active))
+
+    async def broadcast(self, message: str):
+        for ws in list(self.active):
+            try:
+                await ws.send_text(message)
+            except Exception:
+                self.disconnect(ws)
+
+
+manager = ConnectionManager()
+
+@app.websocket("/ws/live")
+async def websocket_live_feed(websocket: WebSocket):
+    """Live feed of every prediction as the streaming consumer scores it."""
+
+    await manager.connect(websocket)
+
+    try:
+        while True:
+            await websocket.receive_text()
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+async def alert_listener():
+    """Background task: relay Redis pub/sub alerts to WebSocket clients."""
+
+    redis_client = None
+    pubsub = None
+
+    try:
+        redis_client = aioredis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            decode_responses=True,
+        )
+
+        pubsub = redis_client.pubsub()
+
+        await pubsub.subscribe(ALERT_CHANNEL)
+
+        logger.info(
+            "Subscribed to '%s' for live alert broadcasting",
+            ALERT_CHANNEL,
+        )
+
+        while True:
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=True,
+                timeout=1.0,
+            )
+
+            if message is not None:
+                if message["type"] == "message":
+                    await manager.broadcast(message["data"])
+
+            await asyncio.sleep(0.01)
+
+    except asyncio.CancelledError:
+        logger.info("Alert listener cancelled")
+
+    except Exception:
+        logger.exception("Alert listener stopped")
+
+    finally:
+        try:
+            if pubsub is not None:
+                await pubsub.unsubscribe(ALERT_CHANNEL)
+                await pubsub.aclose()
+        except Exception:
+            pass
+
+        try:
+            if redis_client is not None:
+                await redis_client.aclose()
+        except Exception:
+            pass
+
+        logger.info("Redis alert listener closed")
+
+
+# =========================================================
+# REQUEST / RESPONSE MODELS
 # =========================================================
 
 class TransactionRequest(BaseModel):
@@ -75,10 +195,6 @@ class TransactionRequest(BaseModel):
         description="Positive transaction ID"
     )
 
-
-# =========================================================
-# RESPONSE MODEL
-# =========================================================
 
 class PredictionResponse(BaseModel):
     prediction_id: int
@@ -98,7 +214,9 @@ class PredictionResponse(BaseModel):
 @app.get("/")
 def root():
     return {
-        "message": "UPI Fraud Detection API is running"
+        "message": "UPI Fraud Detection API is running",
+        "live_feed": "/static/live.html",
+        "websocket": "/ws/live"
     }
 
 
@@ -140,9 +258,71 @@ def health():
         if conn:
             conn.close()
 
+# =========================================================
+# APPLICATION STARTUP / SHUTDOWN
+# =========================================================
+
+alert_listener_task = None
+
+
+@app.on_event("startup")
+async def on_startup():
+    global alert_listener_task
+
+    alert_listener_task = asyncio.create_task(
+        alert_listener()
+    )
+
+    logger.info("Redis alert listener started")
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    global alert_listener_task
+
+    if alert_listener_task is not None:
+        alert_listener_task.cancel()
+
+        try:
+            await alert_listener_task
+        except asyncio.CancelledError:
+            pass
+
+        logger.info("Redis alert listener stopped")
+
+
 
 # =========================================================
-# PREDICT ENDPOINT
+# STREAM STATUS (observability into the real-time pipeline)
+# =========================================================
+
+@app.get("/stream/status")
+def stream_status():
+    try:
+        r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+        length = r.xlen(STREAM_NAME)
+
+        try:
+            groups = r.xinfo_groups(STREAM_NAME)
+        except redis.exceptions.ResponseError:
+            groups = []
+
+        return {
+            "stream": STREAM_NAME,
+            "pending_length": length,
+            "consumer_groups": groups,
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Redis unavailable: {e}"
+        )
+
+
+# =========================================================
+# PREDICT ENDPOINT (unchanged - on-demand scoring by transaction_id)
 # =========================================================
 
 @app.post("/predict", response_model=PredictionResponse)
@@ -300,6 +480,8 @@ def predict_transaction(request: TransactionRequest):
 
         conn.commit()
 
+        
+
         # -------------------------------------------------
         # LOG PREDICTION
         # -------------------------------------------------
@@ -347,6 +529,8 @@ def predict_transaction(request: TransactionRequest):
             detail="Internal server error"
         )
 
+    
+
     finally:
 
         if cursor:
@@ -354,4 +538,5 @@ def predict_transaction(request: TransactionRequest):
 
         if conn:
             conn.close()
-        
+
+    

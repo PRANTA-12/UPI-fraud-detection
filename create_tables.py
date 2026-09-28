@@ -1,11 +1,11 @@
 import psycopg2
 
 conn = psycopg2.connect(
-    host="localhost",
+    host="db",
     port=5432,
-    database="upi_fraud_db",
     user="postgres",
-    password="Pranta@123"
+    password="postgres",
+    database="upi_fraud_db"
 )
 
 cursor = conn.cursor()

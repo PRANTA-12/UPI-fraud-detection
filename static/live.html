@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>UPI Fraud - Live Feed</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; background: #0f1117; color: #e6e6e6; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  #status { font-size: 13px; color: #888; margin-bottom: 16px; }
+  #status.connected { color: #4caf50; }
+  #status.disconnected { color: #e05555; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #262a36; }
+  th { color: #999; font-weight: 500; text-transform: uppercase; font-size: 11px; }
+  tr.high { background: rgba(224, 85, 85, 0.12); }
+  tr.medium { background: rgba(224, 190, 85, 0.10); }
+  tr.low { background: transparent; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge.High { background: #e05555; color: white; }
+  .badge.Medium { background: #d9b23c; color: #1a1a1a; }
+  .badge.Low { background: #2f7a3d; color: white; }
+  #count { color: #666; font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>UPI Fraud Detection - Live Stream</h1>
+  <div id="status" class="disconnected">connecting…</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Transaction ID</th>
+        <th>Probability</th>
+        <th>Risk</th>
+        <th>Result</th>
+        <th>Model</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="count">0 predictions received</div>
+
+<script>
+  const statusEl = document.getElementById('status');
+  const rowsEl = document.getElementById('rows');
+  const countEl = document.getElementById('count');
+  const MAX_ROWS = 200;
+  let received = 0;
+
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}/ws/live`);
+
+    ws.onopen = () => {
+      statusEl.textContent = 'connected - waiting for transactions…';
+      statusEl.className = 'connected';
+    };
+
+    ws.onclose = () => {
+      statusEl.textContent = 'disconnected - retrying in 3s…';
+      statusEl.className = 'disconnected';
+      setTimeout(connect, 3000);
+    };
+
+    ws.onerror = () => ws.close();
+
+    ws.onmessage = (event) => {
+      const p = JSON.parse(event.data);
+      received += 1;
+      countEl.textContent = `${received} predictions received`;
+
+      const tr = document.createElement('tr');
+      tr.className = p.risk_level.toLowerCase();
+      tr.innerHTML = `
+        <td>${p.transaction_id}</td>
+        <td>${(p.fraud_probability * 100).toFixed(2)}%</td>
+        <td><span class="badge ${p.risk_level}">${p.risk_level}</span></td>
+        <td>${p.prediction === 1 ? 'Fraud' : 'Legitimate'}</td>
+        <td>${p.model}</td>
+      `;
+      rowsEl.prepend(tr);
+
+      while (rowsEl.children.length > MAX_ROWS) {
+        rowsEl.removeChild(rowsEl.lastChild);
+      }
+    };
+  }
+
+  connect();
+</script>
+</body>
+</html>
