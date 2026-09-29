@@ -2,16 +2,7 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 
-# --------------------------------------------------
-# 1. CSV PATH
-# --------------------------------------------------
-
 CSV_PATH = "/app/creditcard.csv"
-
-
-# --------------------------------------------------
-# 2. DATABASE CONNECTION
-# --------------------------------------------------
 
 conn = psycopg2.connect(
     host="db",
@@ -23,65 +14,7 @@ conn = psycopg2.connect(
 
 cursor = conn.cursor()
 
-print("Database connected successfully!")
-
-
-# --------------------------------------------------
-# 3. READ CSV
-# --------------------------------------------------
-
-print("Loading CSV...")
-
-df = pd.read_csv(CSV_PATH)
-
-print("CSV loaded successfully!")
-print("Rows:", len(df))
-print("Columns:", len(df.columns))
-
-
-# --------------------------------------------------
-# 4. PREPARE DATA
-# --------------------------------------------------
-
-df = df.rename(columns={
-    "Time": "transaction_time",
-    "Amount": "amount",
-    "Class": "actual_class"
-})
-
-df = df.rename(columns={
-    f"V{i}": f"v{i}" for i in range(1, 29)
-})
-
-
-# --------------------------------------------------
-# 5. SELECT DATABASE COLUMNS
-# --------------------------------------------------
-
-columns = [
-    "transaction_time",
-    "amount"
-]
-
-columns += [f"v{i}" for i in range(1, 29)]
-
-columns.append("actual_class")
-
-df = df[columns]
-
-
-# --------------------------------------------------
-# 6. CONVERT DATAFRAME TO RECORDS
-# --------------------------------------------------
-
-records = list(df.itertuples(index=False, name=None))
-
-print("Records prepared:", len(records))
-
-
-# --------------------------------------------------
-# 7. INSERT DATA
-# --------------------------------------------------
+print("Database connected successfully!", flush=True)
 
 insert_query = """
 INSERT INTO transactions (
@@ -95,34 +28,56 @@ INSERT INTO transactions (
 VALUES %s
 """
 
-print("Inserting data into PostgreSQL...")
+columns = (
+    ["transaction_time", "amount"]
+    + [f"v{i}" for i in range(1, 29)]
+    + ["actual_class"]
+)
 
 batch_size = 5000
+total = 0
 
-for start in range(0, len(records), batch_size):
+print("Loading CSV in chunks...", flush=True)
 
-    batch = records[start:start + batch_size]
+for df in pd.read_csv(CSV_PATH, chunksize=batch_size):
+
+    df = df.rename(columns={
+        "Time": "transaction_time",
+        "Amount": "amount",
+        "Class": "actual_class"
+    })
+
+    df = df.rename(columns={
+        f"V{i}": f"v{i}" for i in range(1, 29)
+    })
+
+    df = df[columns]
+
+    records = list(
+        df.itertuples(index=False, name=None)
+    )
 
     execute_values(
         cursor,
         insert_query,
-        batch,
+        records,
         page_size=batch_size
     )
 
     conn.commit()
 
+    total += len(records)
+
     print(
-        f"Inserted {min(start + batch_size, len(records))} "
-        f"/ {len(records)} rows"
+        f"Inserted {total} / 284807 rows",
+        flush=True
     )
-
-
-# --------------------------------------------------
-# 8. CLOSE CONNECTION
-# --------------------------------------------------
 
 cursor.close()
 conn.close()
 
-print("\nData loading completed successfully!")
+print("Data loading completed successfully!", flush=True)
+
+
+
+
