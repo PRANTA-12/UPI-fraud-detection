@@ -1,15 +1,22 @@
+import os
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 
 CSV_PATH = "/app/creditcard.csv"
 
+
+# --------------------------------------------------
+# 2. DATABASE CONNECTION
+# --------------------------------------------------
+
+
 conn = psycopg2.connect(
-    host="db",
-    port=5432,
-    database="upi_fraud_db",
-    user="postgres",
-    password="postgres"
+    host=os.getenv("DB_HOST", "db"),
+    port=int(os.getenv("DB_PORT", "5432")),
+    database=os.getenv("DB_NAME", "upi_fraud_db"),
+    user=os.getenv("DB_USER", "postgres"),
+    password=os.getenv("DB_PASSWORD")
 )
 
 cursor = conn.cursor()
@@ -76,8 +83,7 @@ for df in pd.read_csv(CSV_PATH, chunksize=batch_size):
 cursor.close()
 conn.close()
 
+
 print("Data loading completed successfully!", flush=True)
-
-
 
 
