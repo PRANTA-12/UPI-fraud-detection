@@ -9,4 +9,4 @@ COPY static ./static
 COPY create_tables.py .
 COPY load_data.py .
 EXPOSE 8000
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
