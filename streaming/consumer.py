@@ -1,17 +1,3 @@
-"""
-Real-time fraud-scoring consumer.
-
-Reads transactions off the Redis Stream as they arrive (via a consumer
-group, so you can run several of these in parallel and Redis will split
-the stream between them - each transaction still gets scored exactly
-once), scores them with the same XGBoost model the batch API uses, writes
-the result to `fraud_predictions`, and publishes it to a pub/sub channel
-so the API can push it to any live viewers over WebSocket.
-
-Scale out horizontally with:
-    docker compose up --scale consumer=3
-"""
-
 import json
 import logging
 from pathlib import Path
