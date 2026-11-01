@@ -9,6 +9,7 @@ load_dotenv()
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") or None
 
 STREAM_NAME = os.getenv("STREAM_NAME", "transactions_stream")
 DLQ_STREAM_NAME = os.getenv("DLQ_STREAM_NAME", "transactions_stream:dlq")

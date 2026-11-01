@@ -1,89 +1,75 @@
+"""REPLACES the old load_data.py.
+
+Fixes over the original:
+  * idempotent: refuses to double-load (count==expected -> no-op; partial -> clear error)
+  * transaction_id = CSV row number (1..N), matching import_to_neon.py, and the SERIAL sequence is
+    advanced afterwards so future inserts cannot collide
+  * fast COPY instead of row batches; credentials only from environment / --database-url
+
+Usage:
+    python load_data.py                       # uses DB_* env vars, CSV at /app/creditcard.csv
+    python load_data.py --csv creditcard.csv --database-url "postgresql://..."
+"""
+import argparse
+import io
 import os
+import sys
+
 import pandas as pd
 import psycopg2
-from psycopg2.extras import execute_values
 
-CSV_PATH = "/app/creditcard.csv"
-
-
-# --------------------------------------------------
-# 2. DATABASE CONNECTION
-# --------------------------------------------------
+EXPECTED_ROWS = 284_807
+COLUMNS = ["transaction_time", "amount", *[f"v{i}" for i in range(1, 29)], "actual_class"]
+RENAME = {"Time": "transaction_time", "Amount": "amount", "Class": "actual_class",
+          **{f"V{i}": f"v{i}" for i in range(1, 29)}}
 
 
-conn = psycopg2.connect(
-    host=os.getenv("DB_HOST", "db"),
-    port=int(os.getenv("DB_PORT", "5432")),
-    database=os.getenv("DB_NAME", "upi_fraud_db"),
-    user=os.getenv("DB_USER", "postgres"),
-    password=os.getenv("DB_PASSWORD")
-)
-
-cursor = conn.cursor()
-
-print("Database connected successfully!", flush=True)
-
-insert_query = """
-INSERT INTO transactions (
-    transaction_time,
-    amount,
-    v1, v2, v3, v4, v5, v6, v7, v8, v9, v10,
-    v11, v12, v13, v14, v15, v16, v17, v18, v19,
-    v20, v21, v22, v23, v24, v25, v26, v27, v28,
-    actual_class
-)
-VALUES %s
-"""
-
-columns = (
-    ["transaction_time", "amount"]
-    + [f"v{i}" for i in range(1, 29)]
-    + ["actual_class"]
-)
-
-batch_size = 5000
-total = 0
-
-print("Loading CSV in chunks...", flush=True)
-
-for df in pd.read_csv(CSV_PATH, chunksize=batch_size):
-
-    df = df.rename(columns={
-        "Time": "transaction_time",
-        "Amount": "amount",
-        "Class": "actual_class"
-    })
-
-    df = df.rename(columns={
-        f"V{i}": f"v{i}" for i in range(1, 29)
-    })
-
-    df = df[columns]
-
-    records = list(
-        df.itertuples(index=False, name=None)
-    )
-
-    execute_values(
-        cursor,
-        insert_query,
-        records,
-        page_size=batch_size
-    )
-
-    conn.commit()
-
-    total += len(records)
-
-    print(
-        f"Inserted {total} / 284807 rows",
-        flush=True
-    )
-
-cursor.close()
-conn.close()
+def dsn_from_env() -> str:
+    from core.config import get_settings
+    return get_settings().dsn
 
 
-print("Data loading completed successfully!", flush=True)
+def load(csv_path: str, dsn: str, chunk: int = 20_000) -> int:
+    conn = psycopg2.connect(dsn, connect_timeout=20)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM transactions")
+            existing = cur.fetchone()[0]
+        if existing == EXPECTED_ROWS:
+            print(f"transactions already contains {existing:,} rows - nothing to do.", flush=True)
+            return existing
+        if existing != 0:
+            raise SystemExit(f"transactions has {existing:,} rows (expected 0 or {EXPECTED_ROWS:,}). "
+                             "Refusing to load to avoid duplicates. Truncate the table first if intended.")
+        total = 0
+        cols = ["transaction_id", *COLUMNS]
+        with conn.cursor() as cur:
+            for df in pd.read_csv(csv_path, chunksize=chunk):
+                df = df.rename(columns=RENAME)[COLUMNS]
+                df.insert(0, "transaction_id", range(total + 1, total + len(df) + 1))
+                buf = io.StringIO()
+                df.to_csv(buf, index=False, header=False)
+                buf.seek(0)
+                cur.copy_expert(f"COPY transactions ({', '.join(cols)}) FROM STDIN WITH CSV", buf)
+                total += len(df)
+                print(f"Loaded {total:,}/{EXPECTED_ROWS:,}", flush=True)
+            cur.execute("SELECT setval(pg_get_serial_sequence('transactions','transaction_id'), "
+                        "(SELECT MAX(transaction_id) FROM transactions))")
+        conn.commit()
+        if total != EXPECTED_ROWS:
+            print(f"WARNING: loaded {total:,} rows; the standard dataset has {EXPECTED_ROWS:,}.", file=sys.stderr)
+        print("Data loading completed successfully!", flush=True)
+        return total
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", default=os.getenv("CSV_PATH", "/app/creditcard.csv"))
+    ap.add_argument("--database-url", default=os.getenv("DATABASE_URL"))
+    a = ap.parse_args()
+    load(a.csv, a.database_url or dsn_from_env())

@@ -76,6 +76,8 @@ def get_connection():
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") or None
+
 STREAM_NAME = os.getenv("STREAM_NAME", "transactions_stream")
 CONSUMER_GROUP = os.getenv("CONSUMER_GROUP", "fraud_scorers")
 ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "fraud_alerts")
@@ -137,6 +139,7 @@ async def alert_listener():
         redis_client = aioredis.Redis(
             host=REDIS_HOST,
             port=REDIS_PORT,
+            password=REDIS_PASSWORD,
             decode_responses=True,
         )
 
@@ -299,8 +302,13 @@ async def on_shutdown():
 @app.get("/stream/status")
 def stream_status():
     try:
-        r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-
+        r = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            password=REDIS_PASSWORD,
+            decode_responses=True,
+        )
+        
         length = r.xlen(STREAM_NAME)
 
         try:

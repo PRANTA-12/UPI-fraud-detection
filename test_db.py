@@ -1,56 +1,14 @@
-import psycopg2
+"""REPLACES the old test_db.py, which contained a hard-coded database password.
+(If that password was ever committed to GitHub, rotate it and purge it from git history.)
 
-conn = psycopg2.connect(
-    host="localhost",
-    port=5432,
-    database="upi_fraud_db",
-    user="postgres",
-    password="Pranta@123"
-)
+Quick connectivity/sanity check:  python test_db.py     (uses DB_* env vars / .env)
+"""
+from core import db
 
-cursor = conn.cursor()
-
-print("Database connected successfully!")
-
-# Check tables
-cursor.execute("""
-    SELECT table_name
-    FROM information_schema.tables
-    WHERE table_schema = 'public'
-    ORDER BY table_name;
-""")
-
-tables = cursor.fetchall()
-
-print("\nTables:")
-for table in tables:
-    print("-", table[0])
-
-# Check total transactions
-cursor.execute("""
-    SELECT COUNT(*)
-    FROM transactions;
-""")
-
-total_transactions = cursor.fetchone()[0]
-
-print("\nTotal transactions:", total_transactions)
-
-# Check fraud distribution
-cursor.execute("""
-    SELECT
-        actual_class,
-        COUNT(*)
-    FROM transactions
-    GROUP BY actual_class
-    ORDER BY actual_class;
-""")
-
-distribution = cursor.fetchall()
-
-print("\nTransaction distribution:")
-for row in distribution:
-    print(row)
-
-cursor.close()
-conn.close()
+if __name__ == "__main__":
+    print("Database connected:", db.ping())
+    print("Tables:", [r["table_name"] for r in db.query_all(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY 1")])
+    print("Total transactions:", db.query_one("SELECT COUNT(*) AS n FROM transactions")["n"])
+    print("Distribution:", db.query_all(
+        "SELECT actual_class, COUNT(*) AS n FROM transactions GROUP BY 1 ORDER BY 1"))

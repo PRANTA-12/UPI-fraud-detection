@@ -1,11 +1,17 @@
-fastapi
-uvicorn[standard]
-psycopg2-binary
-pandas
-numpy
-scipy
-scikit-learn
+# Runtime dependencies (API, producer, consumer). Pinned to the versions the test-suite ran against.
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+websockets==17.4
+psycopg2-binary==2.9.13
+pandas==3.0.2
+numpy==2.4.4
+scipy==1.17.1
 xgboost==3.4.1
-joblib
-python-dotenv
-redis>=5.0.0
+redis==8.1.0
+pydantic-settings==2.16.2
+PyJWT==2.7.0
+bcrypt==5.0.0
+alembic==1.20.1
+SQLAlchemy==2.1.6
+
+joblib==1.5.2

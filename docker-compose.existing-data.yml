@@ -1,0 +1,8 @@
+# OPTIONAL override: reuse the PostgreSQL volume from your previous setup instead of restoring the dump.
+#   docker compose -f docker-compose.yml -f docker-compose.existing-data.yml up -d --build
+# POSTGRES_USER / POSTGRES_PASSWORD in .env MUST match the credentials that existing database was created with.
+# Do NOT reuse the old Redis volume: it holds stream messages in the previous project's format; Redis state is disposable.
+volumes:
+  postgres_data:
+    external: true
+    name: python_postgres_data

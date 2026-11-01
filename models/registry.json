@@ -1,0 +1,20 @@
+{
+  "active": "v1",
+  "versions": [
+    {
+      "version": "legacy",
+      "created_at": null,
+      "threshold": 0.5,
+      "note": "imported original model (not evaluated)"
+    },
+    {
+      "version": "v1",
+      "created_at": "2026-10-31T09:31:46.717113+00:00",
+      "threshold": 0.39501166343688965,
+      "test_pr_auc": 0.7862340582954767,
+      "test_recall": 0.7567567567567568,
+      "test_precision": 0.7671232876712328,
+      "test_f1": 0.7619047619047619
+    }
+  ]
+}

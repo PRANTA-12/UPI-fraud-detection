@@ -1,456 +1,159 @@
-# UPI Fraud Detection
+# UPI SENTINEL — Real-Time Fraud Detection & Risk Intelligence
 
-An end-to-end fraud detection prototype built using Machine Learning, PostgreSQL, FastAPI, Swagger, and Docker.
+An end-to-end fraud-detection platform: versioned XGBoost model with SHAP explanations, a Redis-Streams
+real-time scoring pipeline, a FastAPI backend with JWT/RBAC, PostgreSQL with migrations, and a seven-page
+dark-theme monitoring dashboard.
 
-The system retrieves transaction data from PostgreSQL, applies a trained XGBoost classification model, calculates fraud probability, assigns a risk level, and stores the prediction result back into PostgreSQL.
+> **Dataset disclaimer.** The model is trained on the public *Credit Card Fraud Detection* dataset
+> (284,807 transactions, 492 frauds, anonymised `V1–V28`). It is used as a **research prototype for a UPI-style
+> workflow**. It contains **no genuine UPI data**, and nothing here should be presented as validated for production.
+> The ingestion contract (`streaming/common.py::encode_event`) is source-agnostic so native UPI events can replace the replay producer.
 
-> **Dataset Note:** This project uses the widely used Credit Card Fraud Detection dataset with `Time`, `V1–V28`, `Amount`, and `Class` features. It is adapted as a fraud-detection prototype for a UPI-style transaction workflow rather than representing native UPI transaction data.
+## Architecture
 
----
-
-## Project Architecture
-
-```text
-                    Client
-                      │
-                      ▼
-               Swagger / API
-                      │
-                      ▼
-                  FastAPI
-                      │
-          ┌───────────┴───────────┐
-          │                       │
-          ▼                       ▼
-     PostgreSQL              XGBoost Model
-     Transactions                  │
-          │                        │
-          └───────────┬────────────┘
-                      ▼
-               Fraud Probability
-                      │
-                      ▼
-                  Risk Level
-                      │
-                      ▼
-               PostgreSQL
-              fraud_predictions
+```
+ Transaction source                                   ┌───────────────────────────────┐
+ (replay producer today;  ──►  Redis Stream  ──►  Consumer(s)  ──►  PostgreSQL        │
+  UPI switch/webhook later)    transactions_stream   │ features → XGBoost → risk band │ fraud_predictions
+        │                              │ consumer group (N replicas, each msg once)   │ (idempotent, versioned, latency)
+        │                              ▼                                              └───────────────────────────────┘
+        │                       dead-letter stream                       │
+        │                       (poison / max retries)                   ▼
+        │                                                       Redis Pub/Sub "fraud_alerts"
+        │                                                                │
+        ▼                                                                ▼
+   heartbeats ───────────────────────►  FastAPI  ◄── PostgreSQL aggregates (KPIs, analytics, investigation)
+                                          │  REST (JWT + roles)   │  WebSocket /ws/live (token)
+                                          ▼                       ▼
+                                  Dashboard SPA  (static/, Chart.js vendored, no build step)
 ```
 
----
-
-## Tech Stack
-
-### Programming & Data Science
-
-- Python
-- Pandas
-- NumPy
-- Scikit-learn
-- XGBoost
-- Joblib
-
-### Backend & Database
-
-- FastAPI
-- Uvicorn
-- PostgreSQL
-- Psycopg2
-
-### API Testing
-
-- Swagger UI
-- Pytest
-
-### Deployment & Version Control
-
-- Docker
-- Docker Compose
-- Git
-- GitHub
-
----
-
-## Machine Learning
-
-### Model
-
-**XGBoost Classifier**
-
-The dataset is highly imbalanced, so precision, recall, F1-score, ROC-AUC, and PR-AUC are more useful than accuracy alone.
-
-### Model Performance
-
-| Metric | Score |
-|---|---:|
-| Fraud Precision | 94.25% |
-| Fraud Recall | 83.67% |
-| F1 Score | 88.65% |
-| ROC-AUC | 97.70% |
-| PR-AUC | 88.59% |
-
-> Accuracy is not used as the primary evaluation metric because the dataset is highly imbalanced.
-
-### Classification Threshold
-
-The current prediction threshold is:
-
-```text
-0.50
-```
-
-### Risk Levels
-
-Risk levels are assigned using fraud probability:
-
-| Fraud Probability | Risk Level |
-|---:|---|
-| < 0.30 | Low |
-| 0.30 – < 0.70 | Medium |
-| >= 0.70 | High |
-
----
-
-## Dataset
-
-The project uses the Credit Card Fraud Detection dataset.
-
-### Features
-
-```text
-Time
-V1 - V28
-Amount
-Class
-```
-
-### Dataset Information
-
-| Information | Value |
-|---|---:|
-| Total Transactions | 284,807 |
-| Legitimate Transactions | 284,315 |
-| Fraudulent Transactions | 492 |
-| Fraud Rate | Approximately 0.17% |
-| Total Features | 30 |
-| Target Variable | `Class` |
-
-### Target Variable
-
-```text
-0 = Legitimate
-1 = Fraud
-```
-
-> The `Time` column represents elapsed seconds in the original dataset. It is transformed into an hour-of-day feature for exploratory analysis.
-
----
-
-## API
-
-The backend is built using FastAPI.
-
-### Endpoints
-
-| Method | Endpoint | Description |
+| Layer | Technology | Where |
 |---|---|---|
-| GET | `/` | API information |
-| GET | `/health` | Health check |
-| POST | `/predict` | Predict fraud for a transaction |
+| Model & training | XGBoost, scikit-learn, SHAP, MLflow | `ml/`, `models/` |
+| Streaming | Redis Streams (+ consumer groups), Pub/Sub | `streaming/` |
+| API | FastAPI, Pydantic v2, JWT, bcrypt | `api/`, `core/` |
+| Database | PostgreSQL 16, Alembic | `migrations/` |
+| Dashboard | Vanilla ES modules + Chart.js | `static/` |
+| Ops | Docker Compose, health checks, CI | `Dockerfile`, `docker-compose.yml` |
 
-### Swagger Documentation
+## Quick start (Docker)
 
-The API can be tested using Swagger UI:
-
-```text
-http://127.0.0.1:8000/docs
+```bash
+git clone <your-repo> && cd upi-sentinel
+python scripts/generate_env.py                 # creates .env with random secrets, prints the admin password
+# put creditcard.csv (Kaggle "Credit Card Fraud Detection") in this folder, then:
+docker compose up -d --build                   # db, redis, migrate, api, consumer, producer
+docker compose --profile tools run --rm loader # one-time, idempotent: loads 284,807 rows
 ```
 
-### Prediction Request
+Open **http://localhost:8000/app/** and sign in as `admin` with the printed password.
+API docs: http://localhost:8000/docs. Scale consumers: `docker compose up -d --scale consumer=3`.
 
-```json
-{
-  "transaction_id": 542
-}
+> The loader and producer need the data loaded first. Re-running the loader is a no-op.
+> The original `http://localhost:8000/static/live.html` URL redirects to the new Live Monitoring page.
+
+### Without Docker
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements-ml.txt -r requirements-dev.txt
+cp .env.example .env   # set DB_HOST=localhost, REDIS_HOST=localhost, secrets, ...
+alembic upgrade head && python load_data.py --csv creditcard.csv
+uvicorn api.main:app --reload   # + in other shells:  python -m streaming.consumer / python -m streaming.producer
 ```
 
-### Fraud Prediction Example
+## Machine learning
 
-```json
-{
-  "prediction_id": 17,
-  "transaction_id": 542,
-  "prediction": 1,
-  "result": "Fraud",
-  "fraud_probability": 0.989385187625885,
-  "risk_level": "High",
-  "threshold": 0.5,
-  "model": "XGBoost"
-}
-```
+Train (≈6 min on one CPU core): `python -m ml.train --csv creditcard.csv` → writes `models/versions/vN/`, updates
+`models/registry.json` (newest becomes active; edit the file to roll back) and logs to MLflow.
 
-### Legitimate Prediction Example
+**Leakage controls:** 1,081 exact duplicate rows removed *before* splitting · **temporal split** (first 80 % of time = train,
+last 20 % = untouched test) · all CV/tuning/threshold selection on the train period only · no resampling (class weights /
+`scale_pos_weight`, so nothing synthetic crosses folds) · scaling for logistic regression lives inside a pipeline.
 
-```json
-{
-  "transaction_id": 3,
-  "prediction": 0,
-  "result": "Legitimate",
-  "fraud_probability": 0.00004887185787083581,
-  "risk_level": "Low",
-  "threshold": 0.5,
-  "model": "XGBoost"
-}
-```
+**Features** (`core/features.py`, shared by training, API and consumer so there is no train/serve skew):
+`V1–V28`, `log_amount`, `is_round_amount`, cyclic `hour_sin/hour_cos`
+(*hour = hours since dataset start mod 24 — the dataset has no wall-clock time*).
 
-### API Validation
+**Model comparison** (5-fold stratified CV on the training period; test = one evaluation on the hold-out at threshold 0.5):
 
-The API validates transaction IDs.
+| Model | CV PR-AUC | CV recall | CV precision | Test PR-AUC | Test recall | Test precision |
+|---|---:|---:|---:|---:|---:|---:|
+| Logistic Regression | 71.1 % ± 2.7 | 90.5 % | 6.4 % | 75.3 % | 91.9 % | 2.3 % |
+| Random Forest | 82.3 % ± 3.2 | 77.5 % | 87.4 % | 79.9 % | 71.6 % | 98.1 % |
+| XGBoost (defaults) | 85.5 % ± 3.3 | 84.2 % | 89.4 % | 79.2 % | 75.7 % | 81.2 % |
+| **XGBoost (tuned, deployed)** | 85.3 % ± 3.0 | 83.7 % | 88.4 % | 78.6 % | 75.7 % | 78.9 % |
 
-For example:
+**Deployed model `v1` on the held-out test set** at its tuned threshold (0.395: *maximise F2 on out-of-fold train
+predictions subject to precision ≥ 0.75*):
 
-```json
-{
-  "transaction_id": -1
-}
-```
+| Precision | Recall | F1 | ROC-AUC | PR-AUC | Confusion (TN / FP / FN / TP) |
+|---:|---:|---:|---:|---:|---|
+| 76.7 % | 75.7 % | 76.2 % | 98.3 % | 78.6 % | 56,655 / 17 / 18 / 56 |
 
-Returns HTTP `422` because the transaction ID must be positive.
+**Read these numbers honestly.**
+* They are **lower than the 94 % precision / 88.6 % PR-AUC in the previous README**. Those figures cannot be reproduced from the
+  code I had; a random split that keeps duplicate rows (and ignores time) is the usual cause of that gap. The numbers above are from a stricter protocol.
+* The test period contains only **74 fraud cases**, so each metric has wide uncertainty. Differences between RF and XGBoost
+  are within noise, and hyper-parameter tuning did **not** measurably improve on the default XGBoost. XGBoost is deployed because it is the
+  required real-time model, balances precision and recall, and has exact TreeSHAP explanations.
+* Threshold optimisation did not beat 0.5 on this small test set (F1 77.2 % at 0.5 vs 76.2 %). It is selected from out-of-fold data on principle, not hindsight.
 
-A nonexistent transaction such as:
+**Explainability.** Per-transaction contributions use XGBoost's native `pred_contribs` (exact TreeSHAP). Training verifies it equals
+`shap.TreeExplainer` (max difference recorded in `metadata.json`). Features are anonymised PCA components, so explanations name `V14`, not “merchant risk”.
 
-```json
-{
-  "transaction_id": 999999999
-}
-```
+**Risk bands** (unchanged defaults, now admin-configurable): `< 0.30` Low · `0.30–<0.70` Medium · `≥ 0.70` High.
+The fraud/not-fraud decision uses the model's own threshold; risk bands are display bands.
 
-Returns HTTP `404`.
+## Real-time pipeline guarantees
+Consumer groups (N replicas, each message handled once) · **idempotent** `INSERT … ON CONFLICT (idempotency_key)` with key `txn:model_version` ·
+**at-least-once** (ack only after commit) · **bounded retries** (`MAX_RETRIES`, re-claim via `XAUTOCLAIM`) · **dead-letter stream** (poison immediately, others after retries) ·
+measured **latency** (`latency_ms` enqueue→scored, `inference_ms` model only) · heartbeats for monitoring. Details: [REALTIME.md](REALTIME.md).
 
-Example response:
+## Dashboard (http://localhost:8000/app/)
+1 Executive Overview · 2 Live Transaction Monitoring · 3 Fraud Intelligence Analytics · 4 Transaction Investigation Center ·
+5 AI Model Intelligence · 6 System Health · 7 Settings. “Predicted” figures (model output) are visually separated from “Ground truth” (replayed labels).
+Every number comes from a SQL aggregate, a model artifact or a measured runtime value; empty/loading/error states are explicit.
+Date filters apply to **prediction processing time** (the dataset has no real transaction timestamps).
 
-```json
-{
-  "detail": "Transaction ID 999999999 not found"
-}
-```
-
----
-
-## Database
-
-PostgreSQL is used to store transaction data and prediction results.
-
-### `transactions`
-
-Stores transaction records.
-
-Main fields:
-
-```text
-transaction_id
-transaction_time
-amount
-V1 - V28
-actual_class
-```
-
-### `fraud_predictions`
-
-Stores model prediction results.
-
-Main fields:
-
-```text
-prediction_id
-transaction_id
-fraud_probability
-predicted_class
-model_name
-threshold
-prediction_time
-```
-
----
-
-## Docker
-
-The application is containerized using Docker and Docker Compose.
-
-### Architecture
-
-```text
-                 Docker Compose
-                       │
-              ┌────────┴────────┐
-              │                 │
-              ▼                 ▼
-        PostgreSQL           FastAPI
-                              │
-                              ▼
-                         XGBoost Model
-```
-
-### Start the Application
-
-**PowerShell:**
-
-```powershell
-docker compose up -d
-```
-
-### Check Running Containers
-
-```powershell
-docker compose ps
-```
-
-### View API Logs
-
-```powershell
-docker compose logs api
-```
-
-### Stop the Application
-
-```powershell
-docker compose down
-```
-
-### Ports
-
-```text
-FastAPI       → 8000
-PostgreSQL    → 5433
-```
-
----
-
-## Project Structure
-
-```text
-UPI-fraud-detection/
-│
-├── api/
-│   └── main.py
-│
-├── models/
-│   ├── fraud_model.pkl
-│   └── features.pkl
-│
-├── create_tables.py
-├── load_data.py
-├── test_db.py
-├── Dockerfile
-├── docker-compose.yml
-├── .dockerignore
-├── .gitignore
-├── requirements.txt
-└── README.md
-```
-
----
+## Security
+bcrypt password hashing · JWT (HS256, 60 min) · roles `viewer < analyst < admin` · login rate-limit (Redis) and `/predict` limit · parameterised SQL only,
+whitelisted sort columns · WebSocket requires a valid token (close code 4401) · CORS allow-list · security headers · errors never leak internals (request-id correlated) ·
+audit log (logins, settings changes, predictions) · secrets only from environment, `.env` git-ignored · Docker: non-root user, `cap_drop: ALL`, read-only filesystem, `no-new-privileges`, DB/Redis bound to `127.0.0.1`, Redis password.
+`APP_ENV=production` refuses to start with `AUTH_REQUIRED=false` or a weak `JWT_SECRET`.
+**Original endpoints** (`/`, `/health`, `/stream/status`, `POST /predict`) stay public by default for backward compatibility; set `LEGACY_ENDPOINTS_PUBLIC=false` to protect them.
 
 ## Testing
+`pip install -r requirements-dev.txt && python -m pytest` — **69 tests**: unit (features, risk, config, security), model (scoring, exact SHAP), database
+(migrations, constraints, idempotency, view), API (original contract, auth/RBAC, validation, pagination, errors), streaming (idempotency, DLQ, retries, multi-consumer, producer resume), WebSocket (auth, broadcast).
+A throw-away PostgreSQL is started automatically (`pgserver`); Redis is `fakeredis`. CI: `.github/workflows/ci.yml`.
 
-The project has been tested using Swagger UI and automated API tests.
+## Cloud deployment (outline — not executed in this repo's test environment)
+1. **Managed PostgreSQL** (Neon / RDS): `DATABASE_URL=… alembic upgrade head`, then `python import_to_neon.py` (or `load_data.py --database-url`).
+2. **Managed Redis** with password/TLS (Upstash / ElastiCache) → `REDIS_HOST/PORT/PASSWORD`.
+3. Build the image once; run **api** (public, behind HTTPS so the dashboard uses `wss://`), **consumer** (≥ 2 replicas, private) and, for demos only, **producer**. Container platforms: Render, Fly.io, AWS ECS/Fargate, Cloud Run (needs always-on CPU for consumers).
+4. Set `APP_ENV=production`, strong `JWT_SECRET`, `ADMIN_PASSWORD`, `CORS_ORIGINS=https://your-domain`, `LEGACY_ENDPOINTS_PUBLIC=false`. Create other users with `scripts/create_user.py`.
+5. Replace the replay producer with your real source; keep the event shape from `encode_event`.
 
-### Verified Scenarios
+## Limitations (please read)
+* Not real UPI data; prototype, **not production-ready**. No claim of fraud-catching performance on real payments.
+* Test set has 74 frauds; metrics are noisy. No drift baseline from real traffic (PSI is shown but meaningless while the replay feeds training-distribution data; `PRODUCER_FRAUD_BOOST` inflates fraud share).
+* Latency/throughput numbers describe this prototype on the machine it runs on.
+* In-process API latency stats are per worker; JWT is stored in `sessionStorage` (XSS-sensitive); no refresh tokens / token revocation; HS256 shared secret.
+* `latest_predictions` view is fine at this scale; at tens of millions of predictions use materialised rollups / partitioning.
+* Docker files were validated syntactically and by running every component natively; **`docker compose up` itself was not executed** in the build environment.
 
-- API health check → `200 OK`
-- Legitimate transaction prediction
-- Fraudulent transaction prediction
-- Invalid transaction ID → `422`
-- Nonexistent transaction → `404`
-- Prediction stored in PostgreSQL
-- FastAPI running inside Docker
-- PostgreSQL running inside Docker
-- XGBoost model loaded successfully
-
----
-
-## System Workflow
-
-```text
-Transaction ID
-      │
-      ▼
-   FastAPI
-      │
-      ▼
- PostgreSQL
-      │
-      ▼
-Transaction Features
-      │
-      ▼
- XGBoost Model
-      │
-      ▼
-Fraud Probability
-      │
-      ▼
- Risk Classification
-      │
-      ▼
- PostgreSQL
-      │
-      ▼
-  API Response
+## Project layout
+```
+api/        FastAPI app, routers (legacy, auth, dashboard, transactions, analytics, models, system, settings), WebSocket
+core/       config, db pool, security, risk, features, model store, settings store, rate limit, metrics
+streaming/  producer.py  consumer.py  common.py
+ml/         train.py  mlflow_log.py
+models/     registry.json + versions/v1/{model.json, metadata.json, metrics.json, importance.json, drift_reference.json}
+migrations/ Alembic (0001 baseline = your original tables, 0002 additive upgrade)
+static/     dashboard (index.html, css/, js/, js/pages/, vendor/chart.umd.js)
+scripts/    generate_env.py  create_user.py  healthcheck_*.py
+tests/      69 tests        docs/  AUDIT.md  API.md  INTERVIEW_NOTES.md
 ```
 
----
-
-## Key Features
-
-- Machine Learning based fraud detection
-- XGBoost classification
-- Fraud probability scoring
-- Risk-level classification
-- PostgreSQL transaction storage
-- Prediction history storage
-- FastAPI REST API
-- Swagger API documentation
-- Input validation
-- Error handling
-- Automated API testing
-- Docker containerization
-- Docker Compose deployment
-- Git and GitHub version control
-
----
-
-## Limitations
-
-- The dataset is a credit card fraud dataset rather than native UPI transaction data.
-- The current model is a prototype and is not production-ready.
-- The fraud threshold of `0.50` is a baseline and would require business-level tuning in a real fraud detection system.
-- Real-world UPI fraud detection would require additional transaction, device, user, merchant, velocity, and behavioral features.
-
----
-
-## Future Improvements
-
-- Real-time transaction streaming
-- User behavioral features
-- Device and location features
-- Transaction velocity features
-- Advanced feature engineering
-- Threshold optimization
-- Model monitoring
-- MLflow experiment tracking
-- Explainable AI using SHAP
-- AWS cloud deployment
-- Authentication and authorization
-- Real-time fraud alerts
-- Production monitoring dashboard
-
----
-
-## Author
-
-**Pranta Pratap Ghosh**
-
-B.Tech CSE Student
-
-Aspiring Data Scientist / ML Engineer
+Author: Pranta Pratap Ghosh

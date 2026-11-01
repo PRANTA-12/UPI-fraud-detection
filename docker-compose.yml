@@ -1,151 +1,166 @@
-services:
+# UPI SENTINEL - local stack.   docker compose up -d --build
+# Required in .env: POSTGRES_PASSWORD, REDIS_PASSWORD, JWT_SECRET, ADMIN_PASSWORD  (python scripts/generate_env.py)
 
-  # -------------------------
-  # PostgreSQL Database
-  # -------------------------
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DB_HOST: db
+  DB_PORT: 5432 
+  DB_NAME: ${POSTGRES_DB:-upi_fraud_db}
+  DB_USER: ${POSTGRES_USER:-postgres}
+  DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}                    # container-internal port (the published host port is DB_HOST_PORT)
+  POSTGRES_DB: ${POSTGRES_DB:-upi_fraud_db}
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+  STREAM_NAME: ${STREAM_NAME:-transactions_stream}
+  DLQ_STREAM_NAME: ${DLQ_STREAM_NAME:-transactions_stream:dlq}
+  CONSUMER_GROUP: ${CONSUMER_GROUP:-fraud_consumer_group}
+  ALERT_CHANNEL: ${ALERT_CHANNEL:-fraud_alerts}
+  MAX_RETRIES: ${MAX_RETRIES:-5}
+  RETRY_IDLE_MS: ${RETRY_IDLE_MS:-30000}
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  tmpfs: ["/tmp"]
+
+services:
   db:
     image: postgres:16
     container_name: upi-fraud-db
-
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-
-    ports:
-      - "5433:5432"
-
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
+      POSTGRES_DB: ${POSTGRES_DB:-upi_fraud_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports: ["127.0.0.1:${DB_HOST_PORT:-5433}:5432"]     # reachable from this machine only
+    volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-
-  # -------------------------
-  # Redis
-  # -------------------------
   redis:
     image: redis:7-alpine
     container_name: upi-fraud-redis
-
-    ports:
-      - "6379:6379"
-
+    restart: unless-stopped
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: [redis_data:/data]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping 2>/dev/null | grep -q PONG"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
 
+  migrate:                         # one-shot: applies Alembic migrations (non-destructive) then exits
+    build: .
+    image: upi-sentinel:latest
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      db: {condition: service_healthy}
 
-  # -------------------------
-  # FastAPI
-  # -------------------------
   api:
     build: .
-    image: upi-fraud-api:latest
+    image: upi-sentinel:latest
     container_name: upi-fraud-api
-
-    volumes:
-      - ./creditcard.csv:/app/creditcard.csv:ro
-
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
+    restart: unless-stopped
+    <<: *hardening
     environment:
-      DB_HOST: ${DB_HOST}
-      DB_NAME: ${POSTGRES_DB}
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_PORT: ${DB_PORT}
+      <<: *app-env
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      WS_REQUIRE_AUTH: ${WS_REQUIRE_AUTH:-true}
+      LEGACY_ENDPOINTS_PUBLIC: ${LEGACY_ENDPOINTS_PUBLIC:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-60}
+      PRODUCER_MIN_DELAY_MS: ${PRODUCER_MIN_DELAY_MS:-200}
+      PRODUCER_MAX_DELAY_MS: ${PRODUCER_MAX_DELAY_MS:-1500}
+    volumes: ["./models:/app/models:ro"]
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
 
-      REDIS_HOST: ${REDIS_HOST}
-      REDIS_PORT: ${REDIS_PORT}
-
-      STREAM_NAME: ${STREAM_NAME}
-      DLQ_STREAM_NAME: ${DLQ_STREAM_NAME}
-      CONSUMER_GROUP: ${CONSUMER_GROUP}
-      ALERT_CHANNEL: ${ALERT_CHANNEL}
-
-    ports:
-      - "8000:8000"
-
-
-  # -------------------------
-  # Real-Time Fraud Consumer
-  # -------------------------
-  consumer:
+  consumer:                        # scale:  docker compose up -d --scale consumer=3
     build: .
-    image: upi-fraud-api:latest
-
+    image: upi-sentinel:latest
+    restart: unless-stopped
+    <<: *hardening
     command: ["python", "-m", "streaming.consumer"]
-
+    environment: *app-env           # CONSUMER_NAME defaults to the container hostname => unique per replica
+    volumes: ["./models:/app/models:ro"]
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck_worker.py", "consumer"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
 
-    environment:
-      DB_HOST: ${DB_HOST}
-      DB_NAME: ${POSTGRES_DB}
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_PORT: ${DB_PORT}
-
-      REDIS_HOST: ${REDIS_HOST}
-      REDIS_PORT: ${REDIS_PORT}
-
-      STREAM_NAME: ${STREAM_NAME}
-      DLQ_STREAM_NAME: ${DLQ_STREAM_NAME}
-      CONSUMER_GROUP: ${CONSUMER_GROUP}
-      CONSUMER_NAME: consumer-1
-      ALERT_CHANNEL: ${ALERT_CHANNEL}
-
-
-  # -------------------------
-  # Transaction Producer
-  # -------------------------
-  # Replays transactions from the database
-  # to simulate a real-time transaction source.
-  producer:
+  producer:                        # replays the transactions table (demo stand-in for a real source)
     build: .
-    image: upi-fraud-api:latest
+    image: upi-sentinel:latest
     container_name: upi-fraud-producer
-
+    restart: unless-stopped
+    <<: *hardening
     command: ["python", "-m", "streaming.producer"]
-
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
     environment:
-      DB_HOST: ${DB_HOST}
-      DB_NAME: ${POSTGRES_DB}
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_PORT: ${DB_PORT}
+      <<: *app-env
+      PRODUCER_MIN_DELAY_MS: ${PRODUCER_MIN_DELAY_MS:-200}
+      PRODUCER_MAX_DELAY_MS: ${PRODUCER_MAX_DELAY_MS:-1500}
+      PRODUCER_FRAUD_BOOST: ${PRODUCER_FRAUD_BOOST:-0.03}
+      PRODUCER_REPLAY_FROM: ${PRODUCER_REPLAY_FROM:-heldout}
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck_worker.py", "producer"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
 
-      REDIS_HOST: ${REDIS_HOST}
-      REDIS_PORT: ${REDIS_PORT}
+  # ---- one-off tools (not started by default):  docker compose --profile tools run --rm loader
+  loader:
+    build: .
+    image: upi-sentinel:latest
+    profiles: ["tools"]
+    command: ["python", "load_data.py", "--csv", "/data/creditcard.csv"]
+    environment: *app-env
+    volumes: ["./creditcard.csv:/data/creditcard.csv:ro"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
 
-      STREAM_NAME: ${STREAM_NAME}
+  trainer:                         # docker compose --profile tools run --rm trainer   (writes a new version into ./models)
+    build: {context: ., args: {EXTRAS: ml}}
+    image: upi-sentinel-ml:latest
+    profiles: ["tools"]
+    user: "0:0"
+    command: ["python", "-m", "ml.train", "--csv", "/data/creditcard.csv"]
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-sqlite:////app/mlruns/mlflow.db}
+    volumes: ["./creditcard.csv:/data/creditcard.csv:ro", "./models:/app/models", "./mlruns:/app/mlruns"]
 
-      PRODUCER_MIN_DELAY_MS: ${PRODUCER_MIN_DELAY_MS}
-      PRODUCER_MAX_DELAY_MS: ${PRODUCER_MAX_DELAY_MS}
+  mlflow:                          # optional experiment UI: docker compose --profile mlops up -d mlflow  -> http://localhost:5000
+    image: python:3.12-slim
+    profiles: ["mlops"]
+    command: ["sh", "-c", "pip install --no-cache-dir mlflow==3.17.2 && mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:////mlruns/mlflow.db --default-artifact-root /mlruns/artifacts"]
+    ports: ["127.0.0.1:5000:5000"]
+    volumes: ["./mlruns:/mlruns"]
 
-
-# -------------------------
-# Persistent PostgreSQL Data
-# -------------------------
 volumes:
   postgres_data:
+  redis_data:

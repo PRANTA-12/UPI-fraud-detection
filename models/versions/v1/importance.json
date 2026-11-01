@@ -1,0 +1,194 @@
+[
+  {
+    "feature": "v4",
+    "mean_abs_shap": 2.441756010055542,
+    "mean_shap_when_fraud_pred": 0.9729334115982056,
+    "gain_share": 0.11366279723579377
+  },
+  {
+    "feature": "v14",
+    "mean_abs_shap": 2.1271753311157227,
+    "mean_shap_when_fraud_pred": 3.2560646533966064,
+    "gain_share": 0.4213109917670489
+  },
+  {
+    "feature": "v12",
+    "mean_abs_shap": 1.6206737756729126,
+    "mean_shap_when_fraud_pred": 0.8571462631225586,
+    "gain_share": 0.036380033898278936
+  },
+  {
+    "feature": "v11",
+    "mean_abs_shap": 1.042348861694336,
+    "mean_shap_when_fraud_pred": 0.3725183606147766,
+    "gain_share": 0.019388937725727376
+  },
+  {
+    "feature": "v1",
+    "mean_abs_shap": 1.0239601135253906,
+    "mean_shap_when_fraud_pred": -0.1000487431883812,
+    "gain_share": 0.00678382919050472
+  },
+  {
+    "feature": "v10",
+    "mean_abs_shap": 0.9806846380233765,
+    "mean_shap_when_fraud_pred": 0.9120525121688843,
+    "gain_share": 0.11937858633531567
+  },
+  {
+    "feature": "v8",
+    "mean_abs_shap": 0.9231763482093811,
+    "mean_shap_when_fraud_pred": -1.216518521308899,
+    "gain_share": 0.018142705022943056
+  },
+  {
+    "feature": "log_amount",
+    "mean_abs_shap": 0.6135949492454529,
+    "mean_shap_when_fraud_pred": -0.35669073462486267,
+    "gain_share": 0.023177155454621675
+  },
+  {
+    "feature": "v28",
+    "mean_abs_shap": 0.5834879875183105,
+    "mean_shap_when_fraud_pred": -0.4812137484550476,
+    "gain_share": 0.009809797915939741
+  },
+  {
+    "feature": "v17",
+    "mean_abs_shap": 0.531181812286377,
+    "mean_shap_when_fraud_pred": 0.41293060779571533,
+    "gain_share": 0.033603755598800515
+  },
+  {
+    "feature": "v19",
+    "mean_abs_shap": 0.5010892152786255,
+    "mean_shap_when_fraud_pred": -0.2638566792011261,
+    "gain_share": 0.014931349613523166
+  },
+  {
+    "feature": "v6",
+    "mean_abs_shap": 0.4917312562465668,
+    "mean_shap_when_fraud_pred": -0.30014756321907043,
+    "gain_share": 0.006528374120678438
+  },
+  {
+    "feature": "v3",
+    "mean_abs_shap": 0.47073987126350403,
+    "mean_shap_when_fraud_pred": 0.24078015983104706,
+    "gain_share": 0.013676311554108865
+  },
+  {
+    "feature": "v18",
+    "mean_abs_shap": 0.4666452705860138,
+    "mean_shap_when_fraud_pred": -0.3592769503593445,
+    "gain_share": 0.009862892084986443
+  },
+  {
+    "feature": "v7",
+    "mean_abs_shap": 0.466062992811203,
+    "mean_shap_when_fraud_pred": 0.2655983567237854,
+    "gain_share": 0.011253822628594031
+  },
+  {
+    "feature": "v5",
+    "mean_abs_shap": 0.42687082290649414,
+    "mean_shap_when_fraud_pred": -0.27427050471305847,
+    "gain_share": 0.005807845945049084
+  },
+  {
+    "feature": "v25",
+    "mean_abs_shap": 0.4068778455257416,
+    "mean_shap_when_fraud_pred": -0.2617955505847931,
+    "gain_share": 0.004767909470652128
+  },
+  {
+    "feature": "v21",
+    "mean_abs_shap": 0.3974117338657379,
+    "mean_shap_when_fraud_pred": -0.1282436102628708,
+    "gain_share": 0.00901417342348189
+  },
+  {
+    "feature": "v13",
+    "mean_abs_shap": 0.3841928243637085,
+    "mean_shap_when_fraud_pred": -0.22320230305194855,
+    "gain_share": 0.01193028344564596
+  },
+  {
+    "feature": "v20",
+    "mean_abs_shap": 0.3798750638961792,
+    "mean_shap_when_fraud_pred": -0.29011306166648865,
+    "gain_share": 0.027194799361025646
+  },
+  {
+    "feature": "v22",
+    "mean_abs_shap": 0.3772324025630951,
+    "mean_shap_when_fraud_pred": -0.3113212287425995,
+    "gain_share": 0.008272986488923686
+  },
+  {
+    "feature": "v26",
+    "mean_abs_shap": 0.3572283685207367,
+    "mean_shap_when_fraud_pred": -0.08800549060106277,
+    "gain_share": 0.010110589915249959
+  },
+  {
+    "feature": "v2",
+    "mean_abs_shap": 0.3489414155483246,
+    "mean_shap_when_fraud_pred": -0.6242912411689758,
+    "gain_share": 0.0058485274553021
+  },
+  {
+    "feature": "v9",
+    "mean_abs_shap": 0.34689608216285706,
+    "mean_shap_when_fraud_pred": -0.425645112991333,
+    "gain_share": 0.0077632535255294476
+  },
+  {
+    "feature": "v16",
+    "mean_abs_shap": 0.3421933352947235,
+    "mean_shap_when_fraud_pred": 0.21739603579044342,
+    "gain_share": 0.007162285002369656
+  },
+  {
+    "feature": "v23",
+    "mean_abs_shap": 0.3277222514152527,
+    "mean_shap_when_fraud_pred": -0.2567997872829437,
+    "gain_share": 0.010498652326223034
+  },
+  {
+    "feature": "v27",
+    "mean_abs_shap": 0.32214903831481934,
+    "mean_shap_when_fraud_pred": -0.18190999329090118,
+    "gain_share": 0.004886072937326929
+  },
+  {
+    "feature": "v24",
+    "mean_abs_shap": 0.31872662901878357,
+    "mean_shap_when_fraud_pred": -0.06063656881451607,
+    "gain_share": 0.006669104857956721
+  },
+  {
+    "feature": "v15",
+    "mean_abs_shap": 0.2791295349597931,
+    "mean_shap_when_fraud_pred": -0.2190905660390854,
+    "gain_share": 0.009730986747621613
+  },
+  {
+    "feature": "hour_cos",
+    "mean_abs_shap": 0.24859589338302612,
+    "mean_shap_when_fraud_pred": -0.15802569687366486,
+    "gain_share": 0.002968671333186862
+  },
+  {
+    "feature": "is_round_amount",
+    "mean_abs_shap": 0.13123591244220734,
+    "mean_shap_when_fraud_pred": -0.05054834112524986,
+    "gain_share": 0.0011151526842808322
+  },
+  {
+    "feature": "hour_sin",
+    "mean_abs_shap": 0.09110147505998611,
+    "mean_shap_when_fraud_pred": 0.07191362977027893,
+    "gain_share": 0.008367364933309168
+  }
+]
