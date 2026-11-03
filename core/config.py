@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     redis_host: str = "redis"
     redis_port: int = 6379
     redis_password: str | None = None
+    redis_ssl: bool = False
     stream_name: str = "transactions_stream"
     dlq_stream_name: str = "transactions_stream:dlq"
     consumer_group: str = "fraud_consumer_group"

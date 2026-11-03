@@ -6,8 +6,15 @@ from core.config import get_settings
 
 def _kwargs():
     s = get_settings()
-    return dict(host=s.redis_host, port=s.redis_port, password=s.redis_password or None,
-                decode_responses=True, socket_connect_timeout=5, health_check_interval=30)
+    return dict(
+        host=s.redis_host,
+        port=s.redis_port,
+        password=s.redis_password or None,
+        ssl=s.redis_ssl,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        health_check_interval=30,
+    )
 
 
 def get_sync_redis() -> redis.Redis:
